@@ -1,5 +1,5 @@
 import weave
-from ..openfda import approvals, marketed_products
+from ..openfda import approvals, marketed_products, adverse_events, recalls
 from ..llm import call_claude
 
 # This node is a TWO-PERSON lane. researcher_node branches on the claim's stance and
@@ -11,13 +11,42 @@ from ..llm import call_claude
 
 
 def _research_safety_efficacy(drug: str, claim: dict) -> dict:
-    # TODO(safety_efficacy): adverse_events(drug) + recalls(drug) + call_claude for efficacy.
+    question = claim.get("question", "")
+    # Deterministic openFDA pulls: FAERS adverse-event signals + recall/enforcement actions.
+    react = adverse_events(drug)
+    recall = recalls(drug)
+
+    system = ("You are a pharmaceutical regulatory-affairs analyst. Ground the clinical-risk "
+              "picture in the openFDA data provided; use web search ONLY for the efficacy "
+              "picture (pivotal trials, benefit). Be concise and state plainly what the FDA "
+              "data does and does not show.")
+    user = (f"Question: {question}\n\n"
+            f"FAERS top adverse reactions (openFDA): {react}\n\n"
+            f"Recall / enforcement history (openFDA): {recall}\n\n"
+            "Summarize the adverse-event signal and recall history, then the efficacy picture.")
+    try:  # fail-soft: a degraded finding beats a graph that throws (BUILD_SPEC §8)
+        llm = call_claude(system, user, use_search=True, max_uses=3)
+    except Exception as e:
+        llm = {"text": f"[safety_efficacy LLM unavailable: {e}]", "citations": []}
+
+    # Evidence = FDA-derived facts + web-search citations, all in the frozen {source, detail, url} shape.
+    evidence = [
+        {"source": react.get("source", "openFDA FAERS"),
+         "detail": f"{r.get('term')} — {r.get('count')} reports", "url": ""}
+        for r in react.get("top_reactions", [])
+    ] + [
+        {"source": recall.get("source", "openFDA enforcement"),
+         "detail": f"{rc.get('classification')} — {rc.get('reason')} ({rc.get('date')})", "url": ""}
+        for rc in recall.get("recalls", [])
+    ] + llm.get("citations", [])
+
     return {
         "stance": "safety_efficacy",
-        "claim": claim.get("question", ""),
-        "conclusion": f"[stub] safety & efficacy conclusion for {drug}",
-        "evidence": [{"source": "stub", "detail": "placeholder", "url": ""}],
-        "fda_data": {"source": "stub"},
+        "claim": question,
+        "conclusion": llm.get("text", ""),
+        "evidence": evidence,
+        # source MUST start with "openFDA" so compute_confidence credits the grounding (confidence.py).
+        "fda_data": {"source": "openFDA FAERS + enforcement", "adverse_events": react, "recalls": recall},
     }
 
 
