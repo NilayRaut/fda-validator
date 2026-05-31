@@ -24,11 +24,11 @@ drug + question
 Full context in [`docs/`](docs/): `PROJECT_PROPOSAL.md` (why), `REQUIREMENTS.md` (what + interfaces),
 `BUILD_SPEC.md` (how + build order).
 
-## Status: stub scaffold (BUILD_SPEC §9 steps 1–3)
+## Status: integrated MVP scaffold
 
 The shared foundation is **real** (`llm.py`, `openfda.py`, `state.py`, `confidence.py`, `graph.py`).
-The agent nodes are **stubs** that return shape-correct dummy data so the graph runs end-to-end
-today. Each lane owner replaces exactly one stubbed function against the frozen interfaces.
+Planner, researchers, critic, disagreement, synthesizer, and UI are wired end-to-end. LLM calls fail
+soft if W&B credentials are missing, so the graph can still produce an openFDA-grounded fallback run.
 
 ## Setup
 
@@ -41,13 +41,13 @@ wandb login                 # once
 The LLM backend is **W&B Inference** (OpenAI-compatible, model `deepseek-ai/DeepSeek-V3.1`) — billed
 against `WANDB_API_KEY`, no Anthropic key needed. `WANDB_PROJECT` is **required** before the first run —
 `weave.init` reads it, and `main.py` will fail fast with a clear `KeyError` if it's unset. `WANDB_API_KEY`
-is required only once you implement a node that calls `call_claude` (the stubs make no LLM calls). Note:
-W&B Inference has no web-search tool, so grounding is openFDA-only (BUILD_SPEC §10 cut-order).
+is needed for non-fallback planner/researcher/synthesizer text. W&B Inference has no web-search tool,
+so grounding is openFDA-only (BUILD_SPEC §10 cut-order).
 
 ## Run
 
 ```bash
-python main.py                      # end-to-end stub pipeline → prints report, full Weave trace tree
+python main.py                      # end-to-end pipeline → prints report, full Weave trace tree
 python scripts/proof_of_life.py     # §9.1 gate: one W&B Inference call (needs WANDB_API_KEY)
 python scripts/smoke_openfda.py     # §9.2 gate: real FAERS + Drugs@FDA data (no LLM key)
 streamlit run app.py                # UI placeholder (built out last)
@@ -57,7 +57,7 @@ streamlit run app.py                # UI placeholder (built out last)
 
 Interfaces are **frozen** (see [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) §4 and the header in
 [`src/state.py`](src/state.py)). **Ping the team before changing any shape** — it breaks other lanes.
-Fill your stub, then rerun `python main.py` to confirm the graph still runs.
+After changing a lane, rerun `python main.py` to confirm the graph still runs.
 
 | Lane | Owns (file / function) | Depends on | Gate |
 |---|---|---|---|
@@ -65,7 +65,7 @@ Fill your stub, then rerun `python main.py` to confirm the graph still runs.
 | Planner (done) | `src/agents/planner.py` → `planner_node` | `state.py` | §9.4 |
 | Researcher: Safety & Efficacy | `src/agents/researcher.py` → `_research_safety_efficacy` | `openfda.py`, `llm.py` | §9.5 |
 | Researcher: Precedent & Market | `src/agents/researcher.py` → `_research_precedent_market` | `openfda.py`, `llm.py` | §9.5 |
-| Critic | `src/agents/critic.py` → `critic_node` | `openfda.py`, `llm.py` | §9.6 |
+| Critic | `src/agents/critic.py` → `critic_node` | `openfda.py` | §9.6 |
 | Disagreement + Confidence | `src/disagreement.py`, tune `src/confidence.py` | `state.py` | §9.6 |
 | Synthesizer | `src/agents/synthesizer.py` → `synthesizer_node` | `state.py` | §9.7 |
 | UI | `app.py` | `graph.py` | §9.8 |
@@ -87,5 +87,5 @@ don't edit the same lines.
   for a confidence number.
 - **Fail soft** — every external call returns a typed empty default on error; the graph never crashes.
 - **Model is `deepseek-ai/DeepSeek-V3.1`** (W&B Inference), `max_tokens` ≤ 1500; no web search on this backend.
-- **Stub nodes must not import `src/llm.py`** — it builds the W&B Inference client at import time, which
-  would break a keyless clone. Add the import when you implement your node.
+- **LLM client stays lazy** — `src/llm.py` must remain import-safe in keyless clones; credentials are
+  required only when `call_claude` is actually invoked.

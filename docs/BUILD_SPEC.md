@@ -18,9 +18,9 @@ Tracks (label dropped — it's approval-gated):
 2. **Precedent & Market** — Drugs@FDA approval history + NDC marketed-products (+ web search for competition).
 
 ## 2. Stack
-Python 3.11+ · `openai` client → **W&B Inference** (model `deepseek-ai/DeepSeek-V3.1`, no web search) · openFDA REST (no auth) · `langgraph>=1.2` (Send fan-out) · `weave` (tracing) · `streamlit` (UI, last) · `requests`.
+Python 3.11+ · `openai` client → **W&B Inference** (model `deepseek-ai/DeepSeek-V3.1`, no web search) · openFDA REST (no auth) · `langgraph>=0.6,<0.7` (Send fan-out) · `weave` (tracing) · `streamlit` (UI, last) · `requests`.
 
-`requirements.txt`: `openai`, `weave`, `langgraph>=1.2`, `requests`, `streamlit`, `python-dotenv`.
+`requirements.txt`: `openai`, `weave`, `langgraph>=0.6,<0.7`, `requests`, `streamlit`, `python-dotenv`.
 `.env`: `WANDB_API_KEY=...`, `WANDB_PROJECT=your-username/fda-validator`. Run `wandb login` once.
 
 ## 3. Repo structure
@@ -49,18 +49,22 @@ import os, weave, openai
 # W&B Inference serves open models only (no Claude) and has NO web-search tool, so `use_search`/`max_uses`
 # are accepted for interface compatibility but are NO-OPS and `citations` is always empty. The name
 # `call_claude` and the {"text","citations"} contract are unchanged so no lane import breaks.
-_client = openai.OpenAI(
-    base_url="https://api.inference.wandb.ai/v1",
-    api_key=os.environ.get("WANDB_API_KEY"),
-    project=os.environ.get("WANDB_PROJECT"),
-)
 MODEL = "deepseek-ai/DeepSeek-V3.1"
+_client = None
+
+def _get_client():
+    global _client
+    if _client is None:
+        _client = openai.OpenAI(base_url="https://api.inference.wandb.ai/v1",
+                                api_key=os.environ.get("WANDB_API_KEY"),
+                                project=os.environ.get("WANDB_PROJECT"))
+    return _client
 
 @weave.op
 def call_claude(system: str, user: str, use_search: bool = True, max_uses: int = 3) -> dict:
-    resp = _client.chat.completions.create(model=MODEL, max_tokens=1500,
-                                           messages=[{"role": "system", "content": system},
-                                                     {"role": "user", "content": user}])
+    resp = _get_client().chat.completions.create(model=MODEL, max_tokens=1500,
+                                                 messages=[{"role": "system", "content": system},
+                                                           {"role": "user", "content": user}])
     return {"text": resp.choices[0].message.content or "", "citations": []}
 ```
 
@@ -173,6 +177,8 @@ def compute_confidence(finding: dict, contradiction: dict) -> tuple[float, str]:
     score += min(len(finding.get("evidence", [])), 4) * 0.08
     if str(finding.get("fda_data", {}).get("source", "")).startswith("openFDA"):
         score += 0.15
+    if "llm unavailable" in str(finding.get("conclusion", "")).lower():
+        score -= 0.25
     verdict = (contradiction or {}).get("verdict", "silent")
     if verdict == "contradicts": score -= 0.35
     elif verdict == "supports":  score += 0.15
@@ -195,7 +201,7 @@ if __name__ == "__main__":
 ## 5. Agent jobs (write system prompts to match)
 - **planner** (`call_claude`, no search): output a JSON array of exactly 2 claims — `[{stance:"safety_efficacy", question:...}, {stance:"precedent_market", question:...}]`. Parse defensively.
 - **researcher** (parallel): branch on `claim["stance"]`. `safety_efficacy` → `adverse_events` + `recalls`; `precedent_market` → `approvals` + `marketed_products`. Then `call_claude` to write `conclusion` + `evidence` **from the openFDA data**. Return `{"findings": [Finding]}`. *(Web search for efficacy/trials/competitors is no longer available on the W&B Inference backend — get openFDA grounding working first; add web search only if a separate method is wired up.)*
-- **critic** (independent): per finding, do NOT use its evidence. Independently call openFDA (`adverse_events`/`recalls` for safety; `approvals` for precedent) AND `call_claude` to reason adversarially about the openFDA signals ("what would contradict <claim>?", "what does this drug's FAERS/recall/approval record suggest against it?"). Append `{stance, claim, verdict ∈ {supports,contradicts,silent}, evidence}` to `contradictions`. *(Adversarial web search is unavailable on the current backend — the independent-critic principle is satisfied by querying openFDA independently; add web search later only via a separate method.)*
+- **critic** (independent): per finding, do NOT use its evidence. Independently call openFDA (`adverse_events`/`recalls` for safety; `approvals` for precedent), then classify the critic verdict from those independent sources plus the researcher's conclusion text. Append `{stance, claim, verdict ∈ {supports,contradicts,silent}, evidence}` to `contradictions`. *(Adversarial web search is unavailable on the current backend — the independent-critic principle is satisfied by querying openFDA independently; add LLM/web reasoning later only via a separate method.)*
 - **disagreement_node**: zip findings with matching contradictions, call `compute_confidence`, build `DisagreementEntry` list → `ledger`.
 - **synthesizer** (`call_claude`): turn `ledger` into a markdown report that presents conflict and flags low-confidence claims. Must not collapse to one verdict.
 

@@ -1,3 +1,5 @@
+import re
+
 import weave
 from ..openfda import adverse_events, approvals, recalls
 
@@ -32,7 +34,11 @@ NO_PRECEDENT_TERMS = (
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     lower = text.lower()
-    return any(term in lower for term in terms)
+    for term in terms:
+        pattern = r"(?<![a-z0-9_])" + re.escape(term.lower()) + r"(?![a-z0-9_])"
+        if re.search(pattern, lower):
+            return True
+    return False
 
 
 def _compact(value: object, limit: int = 180) -> str:
@@ -106,7 +112,7 @@ def _critic_precedent_market(drug: str) -> list[dict]:
 
 
 def _classify_verdict(stance: str, claim: str, conclusion: str, evidence: list[dict]) -> str:
-    text = f"{claim} {conclusion}"
+    text = conclusion
     has_faers = any(item.get("source") == "openFDA FAERS (drug/event)" for item in evidence)
     has_recall = any(item.get("source") == "openFDA enforcement (drug/enforcement)" for item in evidence)
     has_approval = any(item.get("source") == "openFDA Drugs@FDA (drug/drugsfda)" for item in evidence)

@@ -20,20 +20,26 @@ def _research_safety_efficacy(drug: str, claim: dict) -> dict:
     rec = recalls(drug)
 
     question = claim.get("question", f"What are the safety and efficacy characteristics of {drug}?")
-    fda_summary = f"Top adverse reactions: {ae.get('top_reactions', [])}\nRecalls: {rec.get('recalls', [])}"
+    fda_summary = (
+        f"Top adverse reactions: {ae.get('top_reactions', [])}\n"
+        f"Adverse-event fetch error: {ae.get('_error', '')}\n"
+        f"Recalls: {rec.get('recalls', [])}\n"
+        f"Recall fetch error: {rec.get('_error', '')}"
+    )
     system = (
         "You are an FDA regulatory researcher specializing in drug safety and efficacy. "
-        "Use the provided openFDA data AND web search to write a concise conclusion about "
+        "Use only the provided openFDA data to write a concise conclusion about "
         "the drug's safety profile, known adverse events, and clinical efficacy evidence. "
-        "Cite your sources."
+        "Do not cite or rely on outside literature unless it is included in the input. "
+        "If the provided data is limited or an openFDA fetch failed, state that limitation."
     )
     user = (
         f"Drug: {drug}\nResearch question: {question}\n\n"
         f"openFDA data:\n{fda_summary}\n\n"
-        "Write a 2-3 sentence conclusion grounded in this data and current literature."
+        "Write a 2-3 sentence conclusion grounded only in the provided openFDA data."
     )
     try:  # fail-soft (BUILD_SPEC §8): a degraded finding beats a graph that throws
-        result = call_claude(system, user, use_search=True, max_uses=3)
+        result = call_claude(system, user, use_search=False)
     except Exception as e:
         result = {"text": f"[safety_efficacy LLM unavailable: {e}]", "citations": []}
 
@@ -53,20 +59,26 @@ def _research_precedent_market(drug: str, claim: dict) -> dict:
     mkt = marketed_products(drug)
 
     question = claim.get("question", f"What is the regulatory precedent and market landscape for {drug}?")
-    fda_summary = f"FDA applications: {apps.get('applications', [])}\nMarketed products: {mkt.get('products', [])}"
+    fda_summary = (
+        f"FDA applications: {apps.get('applications', [])}\n"
+        f"Approval fetch error: {apps.get('_error', '')}\n"
+        f"Marketed products: {mkt.get('products', [])}\n"
+        f"Marketed-products fetch error: {mkt.get('_error', '')}"
+    )
     system = (
         "You are an FDA regulatory researcher specializing in drug approval history and market competition. "
-        "Use the provided openFDA data AND web search to write a concise conclusion about "
+        "Use only the provided openFDA data to write a concise conclusion about "
         "the drug's regulatory approval precedent, current market presence, and competitive landscape. "
-        "Cite your sources."
+        "Do not cite or rely on outside literature unless it is included in the input. "
+        "If the provided data is limited or an openFDA fetch failed, state that limitation."
     )
     user = (
         f"Drug: {drug}\nResearch question: {question}\n\n"
         f"openFDA data:\n{fda_summary}\n\n"
-        "Write a 2-3 sentence conclusion grounded in this data and current literature."
+        "Write a 2-3 sentence conclusion grounded only in the provided openFDA data."
     )
     try:  # fail-soft (BUILD_SPEC §8): a degraded finding beats a graph that throws
-        result = call_claude(system, user, use_search=True, max_uses=3)
+        result = call_claude(system, user, use_search=False)
     except Exception as e:
         result = {"text": f"[precedent_market LLM unavailable: {e}]", "citations": []}
 

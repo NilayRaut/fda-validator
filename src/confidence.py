@@ -9,6 +9,8 @@ def compute_confidence(finding: dict, contradiction: dict) -> tuple[float, str]:
     score += min(len(finding.get("evidence", [])), 4) * 0.08
     if str(finding.get("fda_data", {}).get("source", "")).startswith("openFDA"):
         score += 0.15
+    if "llm unavailable" in str(finding.get("conclusion", "")).lower():
+        score -= 0.25
     verdict = (contradiction or {}).get("verdict", "silent")
     if verdict == "contradicts": score -= 0.35
     elif verdict == "supports":  score += 0.15

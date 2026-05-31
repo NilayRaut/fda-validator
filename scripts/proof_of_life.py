@@ -1,5 +1,5 @@
 """BUILD_SPEC §9.1 gate: answer prints AND a trace appears in W&B.
-Run: python scripts/proof_of_life.py  (needs ANTHROPIC_API_KEY + wandb login)."""
+Run: python scripts/proof_of_life.py  (needs WANDB_API_KEY, WANDB_PROJECT + wandb login)."""
 import os, sys, weave
 from dotenv import load_dotenv
 
