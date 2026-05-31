@@ -2,14 +2,18 @@
 
 > The shared reference. This is *what the system must do* and the *interfaces between components*. How we build it is in `BUILD_SPEC.md`; why we're building it is in `PROJECT_PROPOSAL.md`. If you change anything in §4 (interfaces), tell the whole team — it breaks other lanes.
 
-> **⚠️ BACKEND UPDATE (2026-05-31).** LLM backend is now **W&B Inference** (`deepseek-ai/DeepSeek-V3.1`),
-> not Anthropic Claude. It has **no web-search tool**, so grounding is **openFDA-only**: the "(+ web search …)"
-> mentions and "cited URL" wording below are optional/future, not requirements. The §4 data contracts are
-> unchanged. Researcher & critic lanes: get openFDA grounding working first; add web search only via a
-> separate method later.
+> **⚠️ CURRENT STATE (updated 2026-05-31) — supersedes web-search references below.**
+> LLM backend is **W&B Inference** (`deepseek-ai/DeepSeek-V3.1`), not Anthropic Claude, and it has **no
+> web-search tool**, so the "(+ web search …)" / "cited URL" notes below are obsolete. Grounding instead
+> comes from deterministic fetchers: **openFDA** (FAERS, enforcement, Drugs@FDA, NDC, **drug/label** — for
+> marketed products) **plus ClinicalTrials.gov API v2** (for **investigational** compounds absent from
+> openFDA). When neither returns records, the researcher emits a deterministic *not-grounded* disclaimer
+> instead of fabricating citations, and `compute_confidence` withholds the grounding credit. The critic now
+> critiques across **nonclinical / CMC / clinical** lenses. The §4 data contracts are unchanged. A Weave
+> Evaluation (`scripts/eval_weave.py`) scores grounding / confidence / critic-verdict / honesty.
 
 ## 1. Scope
-A multi-agent system that, given a drug name and a question, produces a structured, evidence-grounded analysis that surfaces disagreement and confidence rather than a single recommendation. Drugs only (devices out of scope). Marketed/approved drugs are the realistic target since FAERS, Drugs@FDA, and the NDC directory all cover marketed products.
+A multi-agent system that, given a drug name and a question, produces a structured, evidence-grounded analysis that surfaces disagreement and confidence rather than a single recommendation. Drugs only (devices out of scope). **Marketed** drugs ground in openFDA (FAERS, Drugs@FDA, NDC, labeling); **investigational** compounds ground in ClinicalTrials.gov (phase, status, sponsor). If a drug name matches neither, the system flags the finding as not grounded rather than fabricating evidence.
 
 ## 2. Components (each is a lane)
 - **Planner** — decomposes the input into the two tracks' research questions.
@@ -63,17 +67,19 @@ A multi-agent system that, given a drug name and a question, produces a structur
 
 Critic output item (one per claim, appended to `contradictions`): `{stance, claim, verdict, evidence:list[dict]}` where `verdict ∈ {supports, contradicts, silent}`.
 
-## 5. openFDA endpoint reference (no auth; ~240 req/min)
-Base: `https://api.fda.gov/drug/<endpoint>.json?search=<query>&limit=<n>` (add `&count=<field>.exact` for aggregations).
+## 5. Data source reference (all public, no auth)
+openFDA base: `https://api.fda.gov/drug/<endpoint>.json?search=<query>&limit=<n>` (add `&count=<field>.exact` for aggregations). ClinicalTrials.gov: `https://clinicaltrials.gov/api/v2/studies?query.term=<drug>`.
 
-| Endpoint | Track | Use | Example search field |
+| Source / endpoint | Track | Use | Example search field |
 |---|---|---|---|
-| `event` (FAERS) | Safety & Efficacy + critic | adverse-event signals | `patient.drug.medicinalproduct:"DRUG"` |
-| `enforcement` | Safety & Efficacy + critic | recalls / enforcement | `product_description:"DRUG"` |
-| `drugsfda` (Drugs@FDA) | Precedent & Market + critic | approval history, app type (NDA/ANDA/BLA), sponsor | `openfda.brand_name:"DRUG"` |
-| `ndc` (NDC Directory) | Precedent & Market | marketed products, manufacturers, drug class | `openfda.generic_name:"DRUG"` or `pharm_class` |
+| openFDA `event` (FAERS) | Safety & Efficacy + critic | adverse-event signals (marketed) | `patient.drug.medicinalproduct:"DRUG"` |
+| openFDA `enforcement` | Safety & Efficacy + critic | recalls / enforcement (marketed) | `product_description:"DRUG"` |
+| openFDA `drugsfda` (Drugs@FDA) | Precedent & Market + critic | approval history, app type (NDA/ANDA/BLA), sponsor | `openfda.brand_name:"DRUG"` |
+| openFDA `ndc` (NDC Directory) | Precedent & Market | marketed products, manufacturers, drug class | `openfda.generic_name:"DRUG"` |
+| openFDA `label` (SPL) | **critic** | nonclinical_toxicology / clinical_pharmacology / clinical_studies (marketed) | `openfda.brand_name:"DRUG"` |
+| **ClinicalTrials.gov** (API v2) | both researchers | **investigational** compounds: phase, status, sponsor, conditions | `query.term=DRUG` |
 
-Harmonized fields (`openfda.brand_name`, `openfda.generic_name`, `openfda.manufacturer_name`, `openfda.pharm_class_epc`) work across endpoints — use them to find the same drug consistently. `drug/drugshortages` is optional market enrichment (verify fields at build time).
+Harmonized openFDA fields (`openfda.brand_name`, `openfda.generic_name`, `openfda.manufacturer_name`, `openfda.pharm_class_epc`) work across endpoints. Implemented in `src/openfda.py` (`adverse_events`, `recalls`, `approvals`, `marketed_products`, `drug_label`) and `src/ctgov.py` (`clinical_trials`).
 
 ## 6. Non-functional requirements
 - **NFR-1 Resilience.** Every external call (W&B Inference LLM, openFDA) MUST fail soft — return a typed empty default and continue. The pipeline never crashes on a single failed call.

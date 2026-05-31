@@ -9,6 +9,13 @@
 > are no-ops, `citations` is always `[]`, and grounding is **openFDA-only**. Every "(+ web search …)" note
 > below is therefore optional/future — researcher & critic lanes should get openFDA grounding working first,
 > and only add web search later if they wire up a separate search method (see §5).
+>
+> **Also now built (beyond the original spec):** `src/ctgov.py` (`clinical_trials`, ClinicalTrials.gov API
+> v2) grounds **investigational** compounds absent from openFDA; `openfda.drug_label` feeds the critic's
+> nonclinical/clinical lenses; the critic critiques across **nonclinical / CMC / clinical**; the researcher
+> emits a deterministic *not-grounded* disclaimer when no records are retrieved (no fabricated citations);
+> `src/graph.py` exposes `run_analysis(drug, question)` as the single traced entry point; and
+> `scripts/eval_weave.py` is a Weave Evaluation (grounding / confidence / critic / honesty).
 
 ## 1. Summary
 Two specialist research tracks run in **parallel**, each grounded in **live openFDA data**, then an **adversarial critic** independently searches for contradicting evidence, a **disagreement engine** computes confidence, and a **synthesizer** surfaces conflict. Everything is traced in **Weave**. The one principle that must not break: the critic searches independently — it never reads the researchers' sources.
@@ -18,7 +25,7 @@ Tracks (label dropped — it's approval-gated):
 2. **Precedent & Market** — Drugs@FDA approval history + NDC marketed-products (+ web search for competition).
 
 ## 2. Stack
-Python 3.11+ · `openai` client → **W&B Inference** (model `deepseek-ai/DeepSeek-V3.1`, no web search) · openFDA REST (no auth) · `langgraph>=0.6,<0.7` (Send fan-out) · `weave` (tracing) · `streamlit` (UI, last) · `requests`.
+Python 3.11+ · `openai` client → **W&B Inference** (model `deepseek-ai/DeepSeek-V3.1`, no web search) · openFDA REST + **ClinicalTrials.gov API v2** (no auth) · `langgraph>=0.6,<0.7` (Send fan-out) · `weave` (tracing + Evaluation) · `streamlit` (UI) · `requests`.
 
 `requirements.txt`: `openai`, `weave`, `langgraph>=0.6,<0.7`, `requests`, `streamlit`, `python-dotenv`.
 `.env`: `WANDB_API_KEY=...`, `WANDB_PROJECT=your-username/fda-validator`. Run `wandb login` once.
@@ -29,15 +36,17 @@ fda-validator/
 ├── README.md  requirements.txt  .env.example
 ├── main.py                      # weave.init + graph.invoke
 ├── app.py                       # Streamlit (last)
+├── scripts/                    # proof_of_life.py, smoke_openfda.py, eval_weave.py (Weave Evaluation)
 └── src/
     ├── state.py                 # contracts + reducer
-    ├── llm.py                   # call_claude (W&B Inference / DeepSeek-V3.1, no search), traced
-    ├── openfda.py               # deterministic FDA fetchers, traced
-    ├── confidence.py            # COMPUTED confidence
+    ├── llm.py                   # call_claude (W&B Inference / DeepSeek-V3.1, no search), lazy + traced
+    ├── openfda.py               # deterministic FDA fetchers incl. drug_label, traced
+    ├── ctgov.py                 # ClinicalTrials.gov v2 fetcher (investigational grounding), traced
+    ├── confidence.py            # COMPUTED confidence (credits real records only)
     ├── disagreement.py          # builds ledger
-    ├── graph.py                 # Send fan-out + wiring
+    ├── graph.py                 # Send fan-out + wiring + run_analysis() entry point
     └── agents/
-        └── planner.py  researcher.py  critic.py  synthesizer.py
+        └── planner.py  researcher.py  critic.py (3-lens)  synthesizer.py
 ```
 
 ## 4. Verified API patterns — USE EXACTLY

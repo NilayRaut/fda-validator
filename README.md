@@ -4,88 +4,142 @@ A regulatory copilot for drugs that **shows where its AI agents disagree and gro
 real FDA data** — so a professional sees which conclusions are solid, which are contested, and the
 evidence behind each, instead of one confident answer that might be wrong.
 
-Two specialist research tracks run **in parallel**, each grounded in live **openFDA** data. Then an
-**adversarial critic** independently searches for *contradicting* evidence (it never reads the
-researchers' sources), a **disagreement engine** computes confidence from observable signals, and a
-**synthesizer** presents the conflict rather than resolving it. Every step is traced in **W&B Weave**
-as the audit trail.
+**Live demo:** https://fda-validator-fv6rokqkrtsnfv962ynssa.streamlit.app/
+
+You enter a drug name and a question. Two specialist research tracks run **in parallel**, each grounded
+in live public data. An **independent adversarial critic** then gathers its *own* evidence — it never
+reads the researchers' sources — and critiques each claim across **nonclinical, CMC, and clinical**
+regulatory lenses. A deterministic **disagreement engine** computes a confidence score from observable
+signals (never from the LLM), and a **synthesizer** writes a briefing that *surfaces* the conflict
+instead of papering over it. Every step is traced in **W&B Weave** as an audit trail.
 
 ```
 drug + question
-  → planner            splits into the two tracks' questions
-  → [ Safety & Efficacy ]   →   PARALLEL, each grounded in live openFDA
-  → [ Precedent & Market ]  →
-  → adversarial critic  independently queries openFDA for CONTRADICTING evidence
-  → disagreement engine scores each claim's confidence (computed, not LLM-generated)
-  → synthesizer         surfaces conflict, not a verdict
-  [ Weave traces every step = the audit trail ]
+  → planner             splits the work into two research questions
+  → [ Safety & Efficacy ]   ┐  PARALLEL — each grounded in live openFDA + ClinicalTrials.gov
+  → [ Precedent & Market ]  ┘
+  → adversarial critic   independently re-queries the data; critiques across
+                         NONCLINICAL / CMC / CLINICAL; emits supports|contradicts|silent
+  → disagreement engine  computes per-claim confidence (deterministic, not LLM-generated)
+  → synthesizer          writes a briefing that preserves the disagreement
+  [ W&B Weave traces every node, model call, and data fetch = the audit trail ]
 ```
 
-Full context in [`docs/`](docs/): `PROJECT_PROPOSAL.md` (why), `REQUIREMENTS.md` (what + interfaces),
-`BUILD_SPEC.md` (how + build order).
+## Why it's different
 
-## Status: integrated MVP scaffold
+Most regulatory AI gives one polished, confident answer — dangerous in a domain where a confident
+*wrong* answer costs lives. This tool leads with **epistemic transparency**: it shows which conclusions
+are contested and backs every claim with real evidence, and it **refuses to fabricate** — for an
+investigational compound absent from the databases, it says so plainly rather than inventing citations.
 
-The shared foundation is **real** (`llm.py`, `openfda.py`, `state.py`, `confidence.py`, `graph.py`).
-Planner, researchers, critic, disagreement, synthesizer, and UI are wired end-to-end. LLM calls fail
-soft if W&B credentials are missing, so the graph can still produce an openFDA-grounded fallback run.
+## How it grounds claims
+
+| Source | API | Used for |
+|---|---|---|
+| **openFDA FAERS** (`drug/event`) | public, no auth | adverse-event signals (marketed) |
+| **openFDA enforcement** (`drug/enforcement`) | public, no auth | recalls (marketed) |
+| **openFDA Drugs@FDA** (`drug/drugsfda`) | public, no auth | approval history (marketed) |
+| **openFDA NDC** (`drug/ndc`) | public, no auth | marketed products / competitors |
+| **openFDA Drug Label** (`drug/label`) | public, no auth | nonclinical / clinical label sections (critic) |
+| **ClinicalTrials.gov** (API v2) | public, no auth | **investigational** compounds (phase, status, sponsor) |
+
+openFDA covers *marketed* products; **ClinicalTrials.gov** grounds *investigational* compounds that
+aren't in openFDA yet. If neither returns records for a name, the finding is explicitly flagged as **not
+grounded** (a deterministic disclaimer, so the model can't pass off training-memory citations as evidence).
+
+The **LLM backend is W&B Inference** (OpenAI-compatible, model `deepseek-ai/DeepSeek-V3.1`) — billed
+against your `WANDB_API_KEY`, no separate Anthropic key. It has no built-in web search, so grounding
+comes entirely from the deterministic data fetchers above (not from the model's memory).
 
 ## Setup
 
 ```bash
-pip install -r requirements.txt
+python -m venv .venv && .venv/bin/pip install -r requirements.txt   # project-local venv
 cp .env.example .env        # fill WANDB_API_KEY and WANDB_PROJECT
-wandb login                 # once
+.venv/bin/wandb login       # once
 ```
 
-The LLM backend is **W&B Inference** (OpenAI-compatible, model `deepseek-ai/DeepSeek-V3.1`) — billed
-against `WANDB_API_KEY`, no Anthropic key needed. `WANDB_PROJECT` is **required** before the first run —
-`weave.init` reads it, and `main.py` will fail fast with a clear `KeyError` if it's unset. `WANDB_API_KEY`
-is needed for non-fallback planner/researcher/synthesizer text. W&B Inference has no web-search tool,
-so grounding is openFDA-only (BUILD_SPEC §10 cut-order).
+`.env`:
+```
+WANDB_API_KEY=...                       # from https://wandb.ai/authorize
+WANDB_PROJECT=your-entity/fda-validator # entity/project; weave.init reads it (required)
+```
+
+> **Note:** install into a **project-local `.venv`**, not a shared conda env — this project needs
+> `langgraph>=1.2`, which can conflict with older langgraph pinned elsewhere.
 
 ## Run
 
 ```bash
-python main.py                      # end-to-end pipeline → prints report, full Weave trace tree
-python scripts/proof_of_life.py     # §9.1 gate: one W&B Inference call (needs WANDB_API_KEY)
-python scripts/smoke_openfda.py     # §9.2 gate: real FAERS + Drugs@FDA data (no LLM key)
-streamlit run app.py                # UI placeholder (built out last)
+.venv/bin/python main.py                  # end-to-end pipeline on Ozempic → prints the briefing
+.venv/bin/streamlit run app.py            # the interactive UI (ledger, badges, critic, Weave link)
+.venv/bin/python scripts/eval_weave.py    # Weave Evaluation: grounding / confidence / critic / honesty
+.venv/bin/python scripts/proof_of_life.py # gate: one W&B Inference call
+.venv/bin/python scripts/smoke_openfda.py # gate: real openFDA data (no LLM key needed)
 ```
 
-## Lanes — who owns what
+Try a **marketed** drug (`Ozempic`), an **investigational** code (`CT041`), and a nonsense name to see
+the grounding, confidence, and honesty behavior change.
 
-Interfaces are **frozen** (see [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) §4 and the header in
-[`src/state.py`](src/state.py)). **Ping the team before changing any shape** — it breaks other lanes.
-After changing a lane, rerun `python main.py` to confirm the graph still runs.
+## Deploy (Streamlit Community Cloud)
 
-| Lane | Owns (file / function) | Depends on | Gate |
-|---|---|---|---|
-| Foundation (shared, done) | `src/llm.py`, `src/openfda.py`, `src/state.py`, `src/graph.py`, `src/confidence.py`, `main.py` | — | §9.1–3 |
-| Planner (done) | `src/agents/planner.py` → `planner_node` | `state.py` | §9.4 |
-| Researcher: Safety & Efficacy | `src/agents/researcher.py` → `_research_safety_efficacy` | `openfda.py`, `llm.py` | §9.5 |
-| Researcher: Precedent & Market | `src/agents/researcher.py` → `_research_precedent_market` | `openfda.py`, `llm.py` | §9.5 |
-| Critic | `src/agents/critic.py` → `critic_node` | `openfda.py` | §9.6 |
-| Disagreement + Confidence | `src/disagreement.py`, tune `src/confidence.py` | `state.py` | §9.6 |
-| Synthesizer | `src/agents/synthesizer.py` → `synthesizer_node` | `state.py` | §9.7 |
-| UI | `app.py` | `graph.py` | §9.8 |
+The app is deployed at the link above. To deploy your own:
+1. Push to GitHub, then at **share.streamlit.io** → New app → this repo, branch `main`, file `app.py`.
+2. **Advanced settings → Secrets** (TOML):
+   ```toml
+   WANDB_API_KEY = "your-key"
+   WANDB_PROJECT = "your-entity/fda-validator"
+   ```
+   `app.py` bridges `st.secrets` → environment automatically, so no `.env` is needed in the cloud.
+3. Deploy → you get a public `*.streamlit.app` URL. Note: every visitor run spends your W&B Inference credits.
 
-The two researcher tracks share `researcher.py` but each owns a separate helper function, so they
-don't edit the same lines.
+## The Weave audit trail (the demo hero shot)
 
-> **⚠️ No web search (Researcher + Critic lanes).** The LLM backend is now **W&B Inference**
-> (`deepseek-ai/DeepSeek-V3.1`), which has **no web-search tool** — `call_claude`'s `use_search`/`max_uses`
-> are no-ops and `citations` comes back empty. So: **get your openFDA grounding working first** (that's the
-> core, and the hard floor in REQUIREMENTS §9). If you want web evidence on top, you must **wire up your own
-> web-search method** (e.g. a search API → feed results into `call_claude` as context) — it won't come for
-> free from the model. Don't block your lane on it.
+Open the project in W&B Weave. The trace list shows run **roots** named **`run_analysis`** (the columns
+there are the *initial* inputs, so `findings`/`ledger` look empty — that's expected). **Click a
+`run_analysis` row** to expand the full tree:
 
-### Rules that must not break
-- **The critic searches independently** — it must NOT be passed a researcher's `evidence`/`fda_data`.
-  It runs its **own openFDA queries** (adversarial web search is gone — see the note above). This is the whole point.
+```
+run_analysis (drug, question)
+ └─ LangGraph
+     ├─ planner          → 2 claims
+     ├─ researcher  ┐ parallel, each with its openFDA + ClinicalTrials.gov fetches + call_claude
+     ├─ researcher  ┘
+     ├─ critic           → independent fetches + 3-lens critique + verdict
+     ├─ disagreement     → compute_confidence (deterministic)
+     └─ synthesizer      → briefing
+```
+
+Every model call, FDA query, and the confidence computation is captured with inputs/outputs/latency —
+that tree *is* the compliance record.
+
+## Components
+
+| Component | File | Role |
+|---|---|---|
+| Planner | `src/agents/planner.py` | drug + question → 2 research claims (defensive JSON parse) |
+| Researchers (×2, parallel) | `src/agents/researcher.py` | openFDA + ClinicalTrials.gov grounding → a `Finding` each |
+| Adversarial critic | `src/agents/critic.py` | independent re-query + nonclinical/CMC/clinical critique + verdict |
+| Disagreement + confidence | `src/disagreement.py`, `src/confidence.py` | deterministic per-claim confidence ledger |
+| Synthesizer | `src/agents/synthesizer.py` | conflict-preserving briefing |
+| Data fetchers | `src/openfda.py`, `src/ctgov.py` | deterministic, fail-soft, Weave-traced |
+| LLM client | `src/llm.py` | W&B Inference (DeepSeek-V3.1), lazy-built |
+| Graph wiring | `src/graph.py` | LangGraph `Send` fan-out + `run_analysis` entry point |
+| UI | `app.py` | Streamlit: input → ledger → critic evidence → Weave link |
+
+## Invariants (do not break)
+
+- **The critic searches independently** — never pass it a researcher's `evidence`/`fda_data`; it runs
+  its own openFDA + label queries. This is the whole point.
 - **Confidence is computed, not generated** — `compute_confidence` is deterministic; never ask the LLM
-  for a confidence number.
+  for a confidence number. It credits grounding only when a real record was actually retrieved.
+- **Never fabricate** — when no record is retrieved, the finding is flagged *not grounded* rather than
+  presenting model-memory citations as evidence.
 - **Fail soft** — every external call returns a typed empty default on error; the graph never crashes.
-- **Model is `deepseek-ai/DeepSeek-V3.1`** (W&B Inference), `max_tokens` ≤ 1500; no web search on this backend.
-- **LLM client stays lazy** — `src/llm.py` must remain import-safe in keyless clones; credentials are
-  required only when `call_claude` is actually invoked.
+- **Model** is `deepseek-ai/DeepSeek-V3.1` via W&B Inference; `max_tokens` ≤ 1500; no web search.
+- **`src/llm.py` stays import-safe** — the client is built lazily, so a keyless clone can import it.
+
+## Docs
+
+Deeper context in [`docs/`](docs/): `PROJECT_PROPOSAL.md` (why), `REQUIREMENTS.md` (what + frozen
+interface contracts), `BUILD_SPEC.md` (how + build order).

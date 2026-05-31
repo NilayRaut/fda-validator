@@ -1,3 +1,4 @@
+import weave
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
 from .state import ResearchState
@@ -26,3 +27,18 @@ def build_graph():
     g.add_edge("disagreement", "synthesizer")
     g.add_edge("synthesizer", END)
     return g.compile()
+
+
+_GRAPH = None
+
+
+@weave.op
+def run_analysis(drug: str, question: str) -> dict:
+    # Single entry point for a run. Being a @weave.op gives the trace a clean, named root
+    # ("run_analysis") with drug+question as inputs — the planner → 2 parallel researchers →
+    # critic → synthesizer tree nests underneath it as the audit trail.
+    global _GRAPH
+    if _GRAPH is None:
+        _GRAPH = build_graph()
+    return _GRAPH.invoke({"drug": drug, "question": question, "claims": [], "findings": [],
+                          "contradictions": [], "ledger": [], "report": ""})
