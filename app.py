@@ -1,7 +1,7 @@
 import os, weave
 import streamlit as st
 from dotenv import load_dotenv
-from src.graph import build_graph
+from src.graph import run_analysis
 
 # LANE: UI (BUILD_SPEC §9.8 / FR-8). Drug input → run pipeline → render the disagreement
 # ledger (per-claim positions, conflict, computed-confidence badge, contradiction flag),
@@ -17,7 +17,6 @@ try:
 except Exception:
     pass
 weave.init(os.environ["WANDB_PROJECT"])
-graph = build_graph()
 
 WEAVE_URL = f"https://wandb.ai/{os.environ['WANDB_PROJECT']}/weave"
 _BADGE = {"high": "green", "medium": "orange", "low": "red"}
@@ -35,9 +34,8 @@ drug = c1.text_input("Drug name", "Ozempic")
 question = c2.text_input("Question", "Safety and regulatory profile?")
 
 if st.button("Run analysis", type="primary"):
-    with st.spinner(f"Researching {drug} across openFDA + independent critic…"):
-        out = graph.invoke({"drug": drug, "question": question, "claims": [],
-                            "findings": [], "contradictions": [], "ledger": [], "report": ""})
+    with st.spinner(f"Researching {drug} across openFDA + ClinicalTrials.gov + independent critic…"):
+        out = run_analysis(drug, question)
 
     st.link_button("🔍 View the full audit trail in Weave", WEAVE_URL)
 

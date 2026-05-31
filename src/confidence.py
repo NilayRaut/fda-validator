@@ -2,9 +2,9 @@ import weave
 
 
 def _has_fda_records(fda_data: dict) -> bool:
-    # True only if a fetcher actually returned records. Guards against crediting "grounding"
-    # for an EMPTY openFDA payload (e.g. investigational drugs absent from these databases),
-    # which would otherwise hand out false confidence on no data.
+    # True only if a fetcher actually returned records (openFDA FAERS/recalls/approvals/NDC OR
+    # ClinicalTrials.gov trials). Guards against crediting "grounding" for an empty payload — e.g.
+    # an unknown drug name — which would otherwise hand out false confidence on no data.
     for value in (fda_data or {}).values():
         if isinstance(value, dict):
             for inner in value.values():
@@ -19,8 +19,9 @@ def compute_confidence(finding: dict, contradiction: dict) -> tuple[float, str]:
     # for a confidence number (FR-5 / NFR-3).
     score = 0.5
     score += min(len(finding.get("evidence", [])), 4) * 0.08
-    fda_data = finding.get("fda_data", {})
-    if str(fda_data.get("source", "")).startswith("openFDA") and _has_fda_records(fda_data):
+    # Credit grounding when a real record was actually retrieved (openFDA or ClinicalTrials.gov),
+    # regardless of the source label — the records, not the string, are the signal.
+    if _has_fda_records(finding.get("fda_data", {})):
         score += 0.15
     if "llm unavailable" in str(finding.get("conclusion", "")).lower():
         score -= 0.25
