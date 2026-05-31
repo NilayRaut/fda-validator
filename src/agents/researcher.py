@@ -61,7 +61,7 @@ def _research_precedent_market(drug: str, claim: dict) -> dict:
         "evidence": evidence,
         # source MUST start with "openFDA" so compute_confidence credits the grounding (confidence.py).
         "fda_data": {"source": "openFDA Drugs@FDA + NDC", "approvals": appr, "marketed_products": mkt},
-    }
+    } 
 
 
 @weave.op
