@@ -1,6 +1,1 @@
-anthropic
-weave
-langgraph>=1.2
-requests
-streamlit
-python-dotenv
+streamlit>=1.33.0
