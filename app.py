@@ -67,7 +67,12 @@ if st.button("Run analysis", type="primary"):
                 if not crit_ev:
                     st.write("Critic found no independent openFDA signal for this claim.")
                 for e in crit_ev:
-                    st.markdown(f"- **{e.get('source', '')}** — {e.get('detail', '')}")
+                    # The 3-lens assessment is a multi-line block; render it titled, not as a bullet.
+                    if e.get("source", "").startswith("Critic 3-lens"):
+                        st.markdown(f"**{e['source']}**")
+                        st.markdown(e.get("detail", ""))
+                    else:
+                        st.markdown(f"- **{e.get('source', '')}** — {e.get('detail', '')}")
 
     st.subheader("Synthesized briefing")
     st.markdown(out.get("report", ""))

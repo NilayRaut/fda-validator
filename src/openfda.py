@@ -42,3 +42,26 @@ def marketed_products(drug: str, limit: int = 8) -> dict:        # Precedent & M
     items = [{"brand": x.get("brand_name"), "manufacturer": x.get("labeler_name"),
               "class": (x.get("pharm_class") or [None])[0]} for x in res] if isinstance(res, list) else []
     return {"drug": drug, "products": items, "source": "openFDA NDC (drug/ndc)"}
+
+
+@weave.op
+def drug_label(drug: str, max_chars: int = 1200) -> dict:        # critic — nonclinical + clinical lenses
+    # SPL label sections exist only for APPROVED/marketed drugs. Each section is truncated to
+    # keep the critic's prompt token budget sane.
+    res = _get("label", {"search": f'openfda.brand_name:"{drug}" openfda.generic_name:"{drug}"', "limit": 1})
+    rec = res[0] if isinstance(res, list) and res else {}
+
+    def section(key):
+        val = rec.get(key)
+        if isinstance(val, list):
+            val = " ".join(str(v) for v in val)
+        return (val or "")[:max_chars]
+
+    return {
+        "drug": drug,
+        "nonclinical_toxicology": section("nonclinical_toxicology"),
+        "clinical_pharmacology": section("clinical_pharmacology"),
+        "clinical_studies": section("clinical_studies"),
+        "warnings": section("warnings") or section("boxed_warning"),
+        "source": "openFDA Drug Label (drug/label)",
+    }
