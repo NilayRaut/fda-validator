@@ -82,3 +82,29 @@ def marketed_products(drug: str, limit: int = 8) -> dict:        # Precedent & M
     if errors:
         out["_error"] = " | ".join(errors)
     return out
+
+
+@weave.op
+def drug_label(drug: str, max_chars: int = 1200) -> dict:        # critic — nonclinical + clinical lenses
+    # SPL label sections exist only for APPROVED/marketed drugs. Sections are truncated to keep
+    # the critic's prompt token budget sane.
+    res = _get("label", {"search": f'openfda.brand_name:"{drug}" openfda.generic_name:"{drug}"', "limit": 1})
+    rec = (_first(res) if isinstance(res, list) else None) or {}
+
+    def section(key):
+        val = rec.get(key)
+        if isinstance(val, list):
+            val = " ".join(str(v) for v in val)
+        return (val or "")[:max_chars]
+
+    out = {
+        "drug": drug,
+        "nonclinical_toxicology": section("nonclinical_toxicology"),
+        "clinical_pharmacology": section("clinical_pharmacology"),
+        "clinical_studies": section("clinical_studies"),
+        "warnings": section("warnings") or section("boxed_warning"),
+        "source": "openFDA Drug Label (drug/label)",
+    }
+    if _error_from(res):
+        out["_error"] = _error_from(res)
+    return out

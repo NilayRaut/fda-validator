@@ -8,6 +8,14 @@ from src.graph import build_graph
 # show the critic's INDEPENDENT evidence, and link to the Weave audit trail.
 
 load_dotenv()
+# Streamlit Community Cloud injects secrets via st.secrets (there is no .env there) — bridge to env
+# so weave.init and the W&B Inference client (which read os.environ) work both locally and deployed.
+try:
+    for _k in ("WANDB_API_KEY", "WANDB_PROJECT"):
+        if _k not in os.environ and _k in st.secrets:
+            os.environ[_k] = st.secrets[_k]
+except Exception:
+    pass
 weave.init(os.environ["WANDB_PROJECT"])
 graph = build_graph()
 
@@ -67,7 +75,12 @@ if st.button("Run analysis", type="primary"):
                 if not crit_ev:
                     st.write("Critic found no independent openFDA signal for this claim.")
                 for e in crit_ev:
-                    st.markdown(f"- **{e.get('source', '')}** — {e.get('detail', '')}")
+                    # The 3-lens assessment is a multi-line block; render it titled, not as a bullet.
+                    if e.get("source", "").startswith("Critic 3-lens"):
+                        st.markdown(f"**{e['source']}**")
+                        st.markdown(e.get("detail", ""))
+                    else:
+                        st.markdown(f"- **{e.get('source', '')}** — {e.get('detail', '')}")
 
     st.subheader("Synthesized briefing")
     st.markdown(out.get("report", ""))

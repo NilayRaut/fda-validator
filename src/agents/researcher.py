@@ -3,6 +3,22 @@ from ..llm import call_claude
 from ..openfda import adverse_events, recalls, approvals, marketed_products
 
 
+_NO_DATA_NOTE = (
+    "_⚠️ No openFDA records were found for this drug (likely investigational / not yet marketed). "
+    "openFDA covers marketed products only, so the assessment below is general background — NOT "
+    "grounded in retrieved FDA data — and should be independently verified._\n\n"
+)
+
+
+def _has_records(*payloads) -> bool:
+    # True only if a fetcher returned actual records (top_reactions/recalls/applications/products).
+    for p in payloads:
+        for v in (p or {}).values():
+            if isinstance(v, list) and v:
+                return True
+    return False
+
+
 def _build_evidence(fda_payload: dict, claude_result: dict) -> list[dict]:
     evidence = [{"source": fda_payload.get("source", "openFDA"), "detail": str(fda_payload), "url": ""}]
     for c in claude_result.get("citations", []):
@@ -44,10 +60,13 @@ def _research_safety_efficacy(drug: str, claim: dict) -> dict:
         result = {"text": f"[safety_efficacy LLM unavailable: {e}]", "citations": []}
 
     fda_data = {"adverse_events": ae, "recalls": rec, "source": ae.get("source", "openFDA")}
+    conclusion = result["text"]
+    if not _has_records(ae, rec):  # deterministic honesty guard for investigational/no-data drugs
+        conclusion = _NO_DATA_NOTE + conclusion
     return {
         "stance": "safety_efficacy",
         "claim": question,
-        "conclusion": result["text"],
+        "conclusion": conclusion,
         "evidence": _build_evidence(fda_data, result),
         "fda_data": fda_data,
     }
@@ -83,10 +102,13 @@ def _research_precedent_market(drug: str, claim: dict) -> dict:
         result = {"text": f"[precedent_market LLM unavailable: {e}]", "citations": []}
 
     fda_data = {"approvals": apps, "marketed_products": mkt, "source": apps.get("source", "openFDA")}
+    conclusion = result["text"]
+    if not _has_records(apps, mkt):  # deterministic honesty guard for investigational/no-data drugs
+        conclusion = _NO_DATA_NOTE + conclusion
     return {
         "stance": "precedent_market",
         "claim": question,
-        "conclusion": result["text"],
+        "conclusion": conclusion,
         "evidence": _build_evidence(fda_data, result),
         "fda_data": fda_data,
     }
