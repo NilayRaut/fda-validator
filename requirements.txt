@@ -1,0 +1,6 @@
+openai
+weave
+langgraph>=1.2
+requests
+streamlit
+python-dotenv
