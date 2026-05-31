@@ -1,97 +1,82 @@
 import weave
-from ..openfda import adverse_events, approvals, marketed_products, recalls
 from ..llm import call_claude
-
-# This node is a TWO-PERSON lane. researcher_node branches on the claim's stance and
-# delegates to one helper per track, so the two owners each edit their OWN function:
-#   - Safety & Efficacy lane → _research_safety_efficacy
-#   - Precedent & Market lane → _research_precedent_market
-# Real impl (BUILD_SPEC §5): each helper calls its openFDA fetcher(s) (+ web search via
-# call_claude) and returns one Finding matching the frozen shape in src/state.py.
+from ..openfda import adverse_events, recalls, approvals, marketed_products
 
 
+def _build_evidence(fda_payload: dict, claude_result: dict) -> list[dict]:
+    evidence = [{"source": fda_payload.get("source", "openFDA"), "detail": str(fda_payload), "url": ""}]
+    for c in claude_result.get("citations", []):
+        evidence.append({
+            "source": c.get("source", "web"),
+            "detail": c.get("detail", ""),
+            "url": c.get("url", ""),
+        })
+    return evidence
+
+
+@weave.op
 def _research_safety_efficacy(drug: str, claim: dict) -> dict:
-    question = claim.get("question", "")
-    # Deterministic openFDA pulls: adverse-event signals (FAERS) + recalls/enforcement.
     ae = adverse_events(drug)
     rec = recalls(drug)
 
-    system = ("You are a pharmacovigilance / clinical-safety analyst. Ground every claim in the "
-              "openFDA data provided. FAERS counts are spontaneous-report signals — not proof of "
-              "causality or incidence — so say so. Be concise and state plainly what the data does "
-              "and does not show about this drug's risk/benefit profile.")
-    user = (f"Question: {question}\n\n"
-            f"FAERS top adverse reactions (openFDA): {ae}\n\n"
-            f"Recalls / enforcement (openFDA): {rec}\n\n"
-            "Summarize the safety signal and any recall history, then the efficacy/benefit picture "
-            "to the extent the FDA data supports it.")
-    try:  # fail-soft: a degraded finding beats a graph that throws (BUILD_SPEC §8)
-        llm = call_claude(system, user, use_search=True, max_uses=3)
+    question = claim.get("question", f"What are the safety and efficacy characteristics of {drug}?")
+    fda_summary = f"Top adverse reactions: {ae.get('top_reactions', [])}\nRecalls: {rec.get('recalls', [])}"
+    system = (
+        "You are an FDA regulatory researcher specializing in drug safety and efficacy. "
+        "Use the provided openFDA data AND web search to write a concise conclusion about "
+        "the drug's safety profile, known adverse events, and clinical efficacy evidence. "
+        "Cite your sources."
+    )
+    user = (
+        f"Drug: {drug}\nResearch question: {question}\n\n"
+        f"openFDA data:\n{fda_summary}\n\n"
+        "Write a 2-3 sentence conclusion grounded in this data and current literature."
+    )
+    try:  # fail-soft (BUILD_SPEC §8): a degraded finding beats a graph that throws
+        result = call_claude(system, user, use_search=True, max_uses=3)
     except Exception as e:
-        llm = {"text": f"[safety_efficacy LLM unavailable: {e}]", "citations": []}
+        result = {"text": f"[safety_efficacy LLM unavailable: {e}]", "citations": []}
 
-    # Evidence = FDA-derived facts (+ any web citations), all in the frozen {source, detail, url} shape.
-    evidence = [
-        {"source": ae.get("source", "openFDA FAERS"),
-         "detail": f"{r.get('term')} — {r.get('count')} reports",
-         "url": "https://open.fda.gov/apis/drug/event/"}
-        for r in ae.get("top_reactions", [])
-    ] + [
-        {"source": rec.get("source", "openFDA enforcement"),
-         "detail": f"{x.get('classification')} ({x.get('date')}): {x.get('reason')}", "url": ""}
-        for x in rec.get("recalls", [])
-    ] + llm.get("citations", [])
-
+    fda_data = {"adverse_events": ae, "recalls": rec, "source": ae.get("source", "openFDA")}
     return {
         "stance": "safety_efficacy",
         "claim": question,
-        "conclusion": llm.get("text", ""),
-        "evidence": evidence,
-        # source MUST start with "openFDA" so compute_confidence credits the grounding (confidence.py).
-        "fda_data": {"source": "openFDA FAERS + enforcement", "adverse_events": ae, "recalls": rec},
+        "conclusion": result["text"],
+        "evidence": _build_evidence(fda_data, result),
+        "fda_data": fda_data,
     }
 
 
+@weave.op
 def _research_precedent_market(drug: str, claim: dict) -> dict:
-    question = claim.get("question", "")
-    # Deterministic openFDA pulls: approval history (Drugs@FDA) + marketed products (NDC).
-    appr = approvals(drug)
+    apps = approvals(drug)
     mkt = marketed_products(drug)
 
-    # Characterizes system
-    system = ("You are a pharmaceutical regulatory-affairs analyst. Ground every claim in the "
-              "openFDA data provided; use web search ONLY to characterize the competitive "
-              "landscape (rival brands, generics, market position). Be concise and state plainly "
-              "what the FDA data does and does not show.")
-    # User prompt
-    user = (f"Question: {question}\n\n"
-            f"Drugs@FDA approval history (openFDA): {appr}\n\n"
-            f"NDC marketed products (openFDA): {mkt}\n\n"
-            "Summarize the approval history and application type, then the competitive landscape.")
-    try:  # fail-soft: a degraded finding beats a graph that throws (BUILD_SPEC §8)
-        llm = call_claude(system, user, use_search=True, max_uses=3)
+    question = claim.get("question", f"What is the regulatory precedent and market landscape for {drug}?")
+    fda_summary = f"FDA applications: {apps.get('applications', [])}\nMarketed products: {mkt.get('products', [])}"
+    system = (
+        "You are an FDA regulatory researcher specializing in drug approval history and market competition. "
+        "Use the provided openFDA data AND web search to write a concise conclusion about "
+        "the drug's regulatory approval precedent, current market presence, and competitive landscape. "
+        "Cite your sources."
+    )
+    user = (
+        f"Drug: {drug}\nResearch question: {question}\n\n"
+        f"openFDA data:\n{fda_summary}\n\n"
+        "Write a 2-3 sentence conclusion grounded in this data and current literature."
+    )
+    try:  # fail-soft (BUILD_SPEC §8): a degraded finding beats a graph that throws
+        result = call_claude(system, user, use_search=True, max_uses=3)
     except Exception as e:
-        llm = {"text": f"[precedent_market LLM unavailable: {e}]", "citations": []}
+        result = {"text": f"[precedent_market LLM unavailable: {e}]", "citations": []}
 
-    # Evidence = FDA-derived facts + web-search citations, all in the frozen {source, detail, url} shape.
-    evidence = [
-        {"source": appr.get("source", "openFDA Drugs@FDA"),
-         "detail": f"App {a.get('application_number')} — {a.get('sponsor')} — {a.get('products')}",
-         "url": "https://www.accessdata.fda.gov/scripts/cder/daf/"}
-        for a in appr.get("applications", [])
-    ] + [
-        {"source": mkt.get("source", "openFDA NDC"),
-         "detail": f"{p.get('brand')} — {p.get('manufacturer')} ({p.get('class')})", "url": ""}
-        for p in mkt.get("products", [])
-    ] + llm.get("citations", [])
-
+    fda_data = {"approvals": apps, "marketed_products": mkt, "source": apps.get("source", "openFDA")}
     return {
         "stance": "precedent_market",
         "claim": question,
-        "conclusion": llm.get("text", ""),
-        "evidence": evidence,
-        # source MUST start with "openFDA" so compute_confidence credits the grounding (confidence.py).
-        "fda_data": {"source": "openFDA Drugs@FDA + NDC", "approvals": appr, "marketed_products": mkt},
+        "conclusion": result["text"],
+        "evidence": _build_evidence(fda_data, result),
+        "fda_data": fda_data,
     }
 
 
@@ -102,4 +87,4 @@ def researcher_node(state: dict) -> dict:
         finding = _research_precedent_market(drug, claim)
     else:
         finding = _research_safety_efficacy(drug, claim)
-    return {"findings": [finding]}   # append-only reducer merges parallel writes
+    return {"findings": [finding]}
