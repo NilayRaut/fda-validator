@@ -1,4 +1,6 @@
 import weave
+from ..openfda import approvals, marketed_products
+from ..llm import call_claude
 
 # This node is a TWO-PERSON lane. researcher_node branches on the claim's stance and
 # delegates to one helper per track, so the two owners each edit their OWN function:
