@@ -26,6 +26,19 @@ _VERDICT = {"contradicts": ("🔴", "critic contradicts"),
             "supports": ("🟢", "critic supports"),
             "silent": ("⚪", "critic silent")}
 
+
+def _source_counts(fda_data: dict) -> str:
+    """One-line summary of how many live records each source returned, for the activity panel."""
+    counts = [
+        ("FAERS", len(fda_data.get("adverse_events", {}).get("top_reactions", []))),
+        ("recalls", len(fda_data.get("recalls", {}).get("recalls", []))),
+        ("Drugs@FDA apps", len(fda_data.get("approvals", {}).get("applications", []))),
+        ("NDC products", len(fda_data.get("marketed_products", {}).get("products", []))),
+        ("ClinicalTrials.gov", len(fda_data.get("clinical_trials", {}).get("trials", []))),
+    ]
+    hits = [f"{label}: {n}" for label, n in counts if n]
+    return " · ".join(hits) if hits else "no records found"
+
 # (label, drug, question) — curated to show the range: marketed, investigational, biologic, stimulant.
 EXAMPLES = [
     ("💉 Ozempic — safety & regulatory profile", "Ozempic", "Safety and regulatory profile?"),
@@ -79,8 +92,13 @@ run_clicked = st.button("Run analysis", type="primary")
 if run_clicked or st.session_state.autorun:
     st.session_state.autorun = False
     drug, question = st.session_state.drug, st.session_state.question
-    with st.spinner(f"Researching {drug} across openFDA + ClinicalTrials.gov + independent critic…"):
+    with st.status("Running the multi-agent pipeline…", expanded=True) as status:
+        st.write("🧭 **Planner** — splitting the question into 2 parallel research tracks")
+        st.write("🔬 **Researchers** — 2 tracks querying live openFDA + ClinicalTrials.gov in parallel")
+        st.write("🕵️ **Critic** — independently re-gathering evidence; critiquing nonclinical / CMC / clinical")
+        st.write("📊 **Disagreement engine** — computing confidence · 📝 **Synthesizer** — writing the briefing")
         out = run_analysis(drug, question)
+        status.update(label="✅ Multi-agent pipeline complete", state="complete", expanded=False)
 
     ledger = out.get("ledger", [])
     findings = out.get("findings", [])
@@ -103,6 +121,22 @@ if run_clicked or st.session_state.autorun:
         st.info("ℹ️ No openFDA / ClinicalTrials.gov records were found — findings are flagged *not grounded*.")
     else:
         st.success("✅ Claims are grounded; the critic did not contradict them.")
+
+    # ---- behind the scenes: showcase the multi-agent orchestration ----
+    with st.expander("🧠 Behind the scenes — what the agents did", expanded=True):
+        st.markdown("**1 · Planner** decomposed the question into 2 parallel research tracks:")
+        for f in findings:
+            st.markdown(f"&nbsp;&nbsp;&nbsp;• `{f.get('stance')}` → {f.get('claim')}")
+        st.markdown("**2 · Researchers** (run in parallel) each pulled live records:")
+        for f in findings:
+            st.markdown(f"&nbsp;&nbsp;&nbsp;• **{f.get('stance')}** → {_source_counts(f.get('fda_data', {}))}")
+        st.markdown("**3 · Independent critic** re-gathered its *own* evidence (it never sees the "
+                    "researchers' sources) and returned a verdict per track:")
+        for c in out.get("contradictions", []):
+            st.markdown(f"&nbsp;&nbsp;&nbsp;• **{c.get('stance')}** → verdict **{c.get('verdict')}** "
+                        f"({len(c.get('evidence', []))} independent items, incl. a nonclinical/CMC/clinical critique)")
+        st.markdown("**4 · Disagreement engine** computed each confidence score deterministically "
+                    "(not from the LLM). **5 · Synthesizer** wrote the briefing below.")
 
     st.link_button("🔍 View the full audit trail in Weave", WEAVE_URL)
 
