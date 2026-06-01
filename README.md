@@ -5,6 +5,8 @@ real FDA data** — so a professional sees which conclusions are solid, which ar
 evidence behind each, instead of one confident answer that might be wrong.
 
 **Live demo:** https://fda-validator-fv6rokqkrtsnfv962ynssa.streamlit.app/
+**🔭 Live audit trail (public):** https://wandb.ai/fdaregulations/fda-validator/weave — click any `run_analysis` row to expand the full agent tree (no login needed)
+**📄 Project report:** [`docs/REPORT.md`](docs/REPORT.md)
 
 You enter a drug name and a question. Two specialist research tracks run **in parallel**, each grounded
 in live public data. An **independent adversarial critic** then gathers its *own* evidence — it never
@@ -95,9 +97,9 @@ The app is deployed at the link above. To deploy your own:
 
 ## The Weave audit trail (the demo hero shot)
 
-Open the project in W&B Weave. The trace list shows run **roots** named **`run_analysis`** (the columns
-there are the *initial* inputs, so `findings`/`ledger` look empty — that's expected). **Click a
-`run_analysis` row** to expand the full tree:
+Open the **public** project: **https://wandb.ai/fdaregulations/fda-validator/weave** (no login required).
+The trace list shows run **roots** named **`run_analysis`** (the columns there are the *initial* inputs, so
+`findings`/`ledger` look empty — that's expected). **Click a `run_analysis` row** to expand the full tree:
 
 ```
 run_analysis (drug, question)
